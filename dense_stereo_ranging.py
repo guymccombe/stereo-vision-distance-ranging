@@ -15,7 +15,6 @@ directory_to_cycle_right = "right-images"   # edit this if needed
 
 skip_forward_file_pattern = ""  # set to timestamp to skip forward to
 
-crop_disparity = False  # display full or cropped disparity image
 pause_playback = False  # pause until key press after each image
 
 # resolve full directory location of data set for left / right images
@@ -25,7 +24,7 @@ full_path_directory_right = path.join(
     master_path_to_dataset, directory_to_cycle_right)
 
 max_disparity = 128
-stereoProcessor = cv2.StereoSGBM_create(0, max_disparity, 21)
+stereoProcessorL = cv2.StereoSGBM_create(0, max_disparity, 21)
 
 # Parse command line arguments for the YOLO config files
 parser = argparse.ArgumentParser(
@@ -49,13 +48,18 @@ def on_trackbar(val):
     return
 
 
-def drawPred(image, class_name, confidence, left, top, right, bottom, colour):
+def drawPred(image, class_name, distance, left, top, right, bottom, colour):
     ''' Draws predicted bounding box on specified image '''
+
+    # Check distance is reasonable
+    if math.isinf(distance) or math.isnan(distance):
+        return
+
     # Draw a bounding box.
     cv2.rectangle(image, (left, top), (right, bottom), colour, 3)
 
     # construct label
-    label = '%s:%.2f' % (class_name, confidence)
+    label = '%s:%.2fm' % (class_name, distance)
 
     # Display the label at the top of the bounding box
     labelSize, baseLine = cv2.getTextSize(
@@ -188,9 +192,11 @@ for filename_left in left_file_list:
 
         ''' READ IMAGES '''
         imgL = cv2.imread(full_path_filename_left, cv2.IMREAD_COLOR)
+        imgL = imgL[:-150, :]  # Crop car bonnet
         cv2.imshow('left image', imgL)
 
         imgR = cv2.imread(full_path_filename_right, cv2.IMREAD_COLOR)
+        imgR = imgR[:-150, :]  # Crop car bonnet
         cv2.imshow('right image', imgR)
 
         print("-- files loaded successfully")
@@ -218,6 +224,46 @@ for filename_left in left_file_list:
         classIDs, confidences, boxes = postprocess(
             frame, results, confThreshold, nmsThreshold)
 
+        ''' CALCULATE DISPARITY '''
+        # Convert to grayscale
+        grayL = cv2.cvtColor(imgL, cv2.COLOR_BGR2GRAY)
+        grayR = cv2.cvtColor(imgR, cv2.COLOR_BGR2GRAY)
+
+        # Preprocessing
+        # Raise to the power, as this subjectively appears to improve subsequent disparity calculation
+        grayL = np.power(grayL, 0.75).astype('uint8')
+        grayR = np.power(grayR, 0.75).astype('uint8')
+
+        # Init WLS filter
+        stereoProcessorR = cv2.ximgproc.createRightMatcher(stereoProcessorL)
+
+        weightedLeastSquareFilter = cv2.ximgproc.createDisparityWLSFilter(
+            matcher_left=stereoProcessorL)
+        weightedLeastSquareFilter.setLambda(80000)
+        weightedLeastSquareFilter.setSigmaColor(1.2)
+
+        # Compute disparity images
+        disparityL = stereoProcessorL.compute(grayL, grayR)
+        disparityR = stereoProcessorR.compute(grayR, grayL)
+
+        # Apply WLS filtering
+        disparity = weightedLeastSquareFilter.filter(
+            disparityL, imgL, None, disparityR)
+
+        # Postprocessing of disparity
+        dispNoiseFilter = 5  # increase for more agressive filtering
+        cv2.filterSpeckles(disparity, 0, 4000, max_disparity - dispNoiseFilter)
+
+        # Scale the disparity for viewing
+        _, disparity = cv2.threshold(
+            disparity, 0, max_disparity * 16, cv2.THRESH_TOZERO)
+        disparity_scaled = (disparity / 16.).astype(np.uint8)
+
+        # Display disparity
+        cv2.imshow("Disparity Map", (disparity_scaled *
+                                     (256. / max_disparity)).astype(np.uint8))
+
+        ''' DRAW DETECTED OBJECT/DISTANCE PAIRS '''
         # draw resulting detections on image
         for detected_object in range(0, len(boxes)):
             box = boxes[detected_object]
@@ -225,7 +271,14 @@ for filename_left in left_file_list:
             top = box[1]
             width = box[2]
             height = box[3]
-            drawPred(frame, classes[classIDs[detected_object]], confidences[detected_object],
+
+            disparityOfObject = np.median(
+                disparity_scaled[top:top + height, left:left + width])
+
+            distanceToObject = (399.9745178222656 *
+                                0.2090607502) / disparityOfObject
+
+            drawPred(frame, classes[classIDs[detected_object]], distanceToObject,
                      left, top, left + width, top + height, (255, 178, 50))
 
         # Put efficiency information. The function getPerfProfile returns the overall time for inference(t) and the timings for each of the layers(in layersTimes)
@@ -249,58 +302,14 @@ for filename_left in left_file_list:
         key = cv2.waitKey(max(2, 40 - int(math.ceil(timeEnd)))) & 0xFF
 
         # if user presses "x" then exit  / press "f" for fullscreen display
-        if (key == ord('x')):
-            keep_processing = False
-        elif (key == ord('f')):
-            args.fullscreen = not(args.fullscreen)
-
-        ''' CALCULATE DISPARITY '''
-        # Convert to grayscale
-        grayL = cv2.cvtColor(imgL, cv2.COLOR_BGR2GRAY)
-        grayR = cv2.cvtColor(imgR, cv2.COLOR_BGR2GRAY)
-
-        # Preprocessing
-        # Raise to the power, as this subjectively appears to improve subsequent disparity calculation
-        grayL = np.power(grayL, 0.75).astype('uint8')
-        grayR = np.power(grayR, 0.75).astype('uint8')
-
-        # Compute disparity image
-        disparity = stereoProcessor.compute(grayL, grayR)
-
-        # Postprocessing of disparity
-        dispNoiseFilter = 5  # increase for more agressive filtering
-        cv2.filterSpeckles(disparity, 0, 4000, max_disparity - dispNoiseFilter)
-
-        # Scale the disparity for viewing
-        _, disparity = cv2.threshold(
-            disparity, 0, max_disparity * 16, cv2.THRESH_TOZERO)
-        disparity_scaled = (disparity / 16.).astype(np.uint8)
-
-        # Crop disparity
-        if (crop_disparity):
-            width = np.size(disparity_scaled, 1)
-            disparity_scaled = disparity_scaled[0:390, 135:width]
-
-        # Display disparity
-        cv2.imshow("disparity", (disparity_scaled *
-                                 (256. / max_disparity)).astype(np.uint8))
-
-        # keyboard input for exit (as standard), save disparity and cropping
-        # exit - x
-        # save - s
-        # crop - c
-        # pause - space
-
-        # wait 40ms (i.e. 1000ms / 25 fps = 40 ms)
-        key = cv2.waitKey(40 * (not(pause_playback))) & 0xFF
         if (key == ord('x')):       # exit
             break  # exit
+        elif (key == ord('f')):
+            args.fullscreen = not(args.fullscreen)
         elif (key == ord('s')):     # save
             cv2.imwrite("sgbm-disparty.png", disparity_scaled)
             cv2.imwrite("left.png", imgL)
             cv2.imwrite("right.png", imgR)
-        elif (key == ord('c')):     # crop
-            crop_disparity = not(crop_disparity)
         elif (key == ord(' ')):     # pause (on next frame)
             pause_playback = not(pause_playback)
     else:
