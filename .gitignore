@@ -1,5 +1,8 @@
 dataset/
 .vscode/
-yolo.py
-stereo_disparity.py
+__pycache__/
 yolov3.weights
+coco.names
+yolov3.cfg
+yoloOriginal.py
+stereo_disparity_original.py
