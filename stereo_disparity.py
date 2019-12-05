@@ -20,22 +20,32 @@ weightedLeastSquareFilter.setLambda(lmbda)
 weightedLeastSquareFilter.setSigmaColor(sigma)
 
 
+def getDistanceToPoint(points, FOCAL_LENGTH=399.9745178222656, CAMERA_BASELINE=0.2090607502):
+    ''' Calculates the distance to the point provided in the left image '''
+    pointL, pointR = points
+    disparity = np.power(
+        np.power(pointL[0]-pointR[0], 2) + np.power(pointL[1]-pointR[1], 2), 0.5)
+    distance = FOCAL_LENGTH * CAMERA_BASELINE / disparity
+    return distance
+
+
 def getDistanceToBox(disparityMap, box, FOCAL_LENGTH=399.9745178222656, CAMERA_BASELINE=0.2090607502):
-    left = box[0]
-    right = left + box[2]
+    ''' Calculates the distance to the box provided '''
+    left = max(
+        box[0], 175)  # 175 removes the zero bar on the left of disparity
+    right = box[0] + box[2]
     top = box[1]
     bottom = top + box[3]
 
     croppedDisparity = disparityMap[top:bottom, left:right]
+    # i.e. if box is empty or all zero
+    if croppedDisparity.size == 0 or not np.any(croppedDisparity):
+        return float("NaN")
 
-    try:
-        disparityOfObject = np.percentile(
-            croppedDisparity, 25, axis=0, overwrite_input=True)
-        disparityOfObject = np.median(disparityOfObject)
-    except:  # Fall back to mean if median throws exception
-        disparityOfObject = np.mean(croppedDisparity)
+    mode = np.apply_along_axis(lambda x: np.bincount(
+        x).argmax(), axis=0, arr=croppedDisparity.flatten())
 
-    distanceToObject = FOCAL_LENGTH * CAMERA_BASELINE / disparityOfObject
+    distanceToObject = FOCAL_LENGTH * CAMERA_BASELINE / mode
     return distanceToObject
 
 
@@ -48,6 +58,7 @@ def calculateDisparity(leftImage, rightImage):
 
 
 def preprocess(images):
+    ''' Performs a range of preprocessing actions to the image to improve results '''
     for i in range(len(images)):
         image = images[i]
         image = convertToGrayscale(image)
@@ -70,6 +81,7 @@ def equalizeBrightness(image):
 
 
 def computeLeftAndRightDisparities(leftImage, rightImage):
+    ''' Computte disparities with respect to both left and right images '''
     stereoProcessorR = cv2.ximgproc.createRightMatcher(stereoProcessorL)
     disparityL = stereoProcessorL.compute(leftImage, rightImage)
     disparityR = stereoProcessorR.compute(rightImage, leftImage)
@@ -77,6 +89,7 @@ def computeLeftAndRightDisparities(leftImage, rightImage):
 
 
 def postprocess(leftDisparity, rightDisparity, originalLeftImage):
+    ''' Post processing on disparity map for more accurate readings '''
     disparity = weightedLeastSquareFilter.filter(
         leftDisparity, originalLeftImage, None, rightDisparity)
 
