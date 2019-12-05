@@ -2,7 +2,7 @@
 YOLOv3 Object Detection
 
 Author : Toby Breckon, toby.breckon@durham.ac.uk
-Refactored by Guy McCombe for use in the assignment set by Toby Breckon
+Refactored by Guy McCombe for use in this assignment set by Toby Breckon
 
 Copyright (c) 2019 Toby Breckon, Durham University, UK
 License : LGPL - http://www.gnu.org/licenses/lgpl.html
@@ -81,7 +81,7 @@ def getOutputsNames(net):
     return [layersNames[i[0] - 1] for i in net.getUnconnectedOutLayers()]
 
 
-confThreshold = 0.2  # Confidence threshold
+confThreshold = 0.25  # Confidence threshold
 nmsThreshold = 0.4   # Non-maximum suppression threshold
 inpWidth = 416       # Width of network's input image
 inpHeight = 416      # Height of network's input image
@@ -99,8 +99,19 @@ net.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
 # change to cv2.dnn.DNN_TARGET_CPU (slower) if this causes issues (should fail gracefully if OpenCL not available)
 net.setPreferableTarget(cv2.dnn.DNN_TARGET_OPENCL)
 
+CLAHE = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
 
 def detectObjects(frame):
+    ''' Uses YOLOv3 to detect objects.
+
+    Returns a dictionary of:
+     box   -- left, top, width and height of the detected object.
+     class -- the classifier of the detected object.
+    '''
+
+    frame = contrastEqualisation(frame)
+
     # create a 4D tensor (OpenCV 'blob') from image frame (pixels scaled 0->1, image resized)
     tensor = cv2.dnn.blobFromImage(
         frame, 1/255, (inpWidth, inpHeight), [0, 0, 0], 1, crop=False)
@@ -115,6 +126,7 @@ def detectObjects(frame):
     classIDs, confidences, boxes = postprocess(
         frame, results, confThreshold, nmsThreshold)
 
+    # create list of dicts of boxes and object names
     boxClassPairs = []
     for i in range(len(boxes)):
         objBox = boxes[i]
@@ -122,3 +134,16 @@ def detectObjects(frame):
         boxClassPairs += [{"box": objBox, "class": objClass}]
 
     return boxClassPairs
+
+
+def contrastEqualisation(frame):
+    ''' Applies adaptive histogram equalisation '''
+    # Convert to HSV
+    frameAsHSV = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(frameAsHSV)
+
+    equalisedV = CLAHE.apply(v)
+
+    frameAsHSV = cv2.merge((h, s, equalisedV))
+    frame = cv2.cvtColor(frameAsHSV, cv2.COLOR_HSV2BGR)
+    return frame
