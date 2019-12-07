@@ -3,13 +3,15 @@ from numpy import vstack, median
 from os import path, listdir
 from math import isinf, isnan, ceil
 
-from dense_stereo_ranging import readImages
+from dense_stereo_ranging import readImages, printMinDist
 from yolo import detectObjects
 from stereo_disparity import getDistanceToPoint
 
 # Path to dataset
-# ** need to edit this **
-pathToDataset = "dataset"
+# ** need to edit this ** #
+pathToDataset = "TTBB-durham-02-10-17-sub10"
+# *********************** #
+
 pathToLeftImages = "left-images"     # edit this if needed
 pathToRightImages = "right-images"   # edit this if needed
 
@@ -47,15 +49,16 @@ def sparseRanging(skipForwardTo=""):
         originalInput = vstack((imgL, imgR))
         cv2.imshow("Input Images", originalInput)
 
+        # detect feature points
         featurePointsL, descriptorsL = featurePointDetector.detectAndCompute(
             imgL, mask=None)
-
         featurePointsR, descriptorsR = featurePointDetector.detectAndCompute(
             imgR, mask=None)
 
         featureImg = cv2.drawKeypoints(imgL, featurePointsL, None)
         cv2.imshow("Features", featureImg)
 
+        # match feature points
         matches = matcher.knnMatch(
             descriptorsR, trainDescriptors=descriptorsL, k=2)
         goodMatches = []
@@ -63,13 +66,18 @@ def sparseRanging(skipForwardTo=""):
             if m.distance < 0.75*n.distance:
                 goodMatches += [m]
 
+        # construct match dictionary
         featurePointDict = {}
         for match in goodMatches:
             featurePointDict[featurePointsL[match.trainIdx]
                              .pt] = featurePointsR[match.queryIdx].pt
 
+        # YOLO object detection
         objects = detectObjects(imgL)
-        calculateAndDrawDistances(objects, featurePointDict, imgL)
+
+        # calculate distances and draw shapes
+        minDist = calculateAndDrawDistances(objects, featurePointDict, imgL)
+        printMinDist(leftFileName, minDist)
 
         # Crop to remove area which cannot be ranged
         # i.e. not seen by the right camera
@@ -99,7 +107,10 @@ def sparseRanging(skipForwardTo=""):
 
 
 def calculateAndDrawDistances(objs, featureDict, img):
+    ''' Gets distance to objects and draws shapes '''
+
     objsOut = []
+    minimumDistance = float("+inf")
     for obj in objs:
         box = obj["box"]
         left = box[0]
@@ -108,12 +119,19 @@ def calculateAndDrawDistances(objs, featureDict, img):
         bottom = box[1] + box[3]
 
         pos = (left, right, top, bottom)
+        # calculate distance
         distance = calculateDistanceToObject(*pos, featureDict)
+        if distance < minimumDistance:
+            minimumDistance = distance
 
+        # draw shapes
         drawBox(img, *pos, obj["class"], distance)
+
+    return minimumDistance
 
 
 def calculateDistanceToObject(left, right, top, bottom, dictionary):
+    ''' Get distance to object '''
     distances = []
     for pointLeft in dictionary:
         if left < pointLeft[0] < right and top < pointLeft[1] < bottom:
@@ -124,6 +142,7 @@ def calculateDistanceToObject(left, right, top, bottom, dictionary):
 
 
 def drawBox(image, left, right, top, bottom, name, distance, colour=(255, 178, 50)):
+    ''' Draws boxes around detected objects '''
     if isinf(distance) or isnan(distance):
         return
 
@@ -144,4 +163,6 @@ def drawBox(image, left, right, top, bottom, name, distance, colour=(255, 178, 5
 
 
 if __name__ == "__main__":
-    sparseRanging()
+    sparseRanging(skipForwardTo="")
+    # set skipForwardTo parameter to a file timestamp to start from (empty is go from the start)
+    # e.g. set to 1506943191.487683 for the end of the Bailey, just as the vehicle turns

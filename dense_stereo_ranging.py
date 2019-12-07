@@ -9,8 +9,10 @@ from yolo import detectObjects
 from stereo_disparity import calculateDisparity, getDistanceToBox
 
 # Path to dataset
-# ** need to edit this **
-pathToDataset = "dataset"
+# ** need to edit this ** #
+pathToDataset = "TTBB-durham-02-10-17-sub10"
+# *********************** #
+
 pathToLeftImages = "left-images"     # edit this if needed
 pathToRightImages = "right-images"   # edit this if needed
 
@@ -24,47 +26,64 @@ pathToRightImages = path.join(
 leftFileList = sorted(listdir(pathToLeftImages))
 
 
-def denseStereoRanging(skipForward=""):
+def denseRanging(skipForwardTo=""):
+    ''' Main loop, detects objects and displays distance to them. '''
     pausePlayback = False
     for leftFileName in leftFileList:
         timeStart = cv2.getTickCount()
 
-        if skipForward and not skipForward in leftFileName:
+        # Skip forward
+        if skipForwardTo and not skipForwardTo in leftFileName:
             continue
-        elif skipForward and skipForward in leftFileName:
-            skipForward = ""
+        elif skipForwardTo and skipForwardTo in leftFileName:
+            skipForwardTo = ""
 
+        # Read and verify images
         images = readImages(leftFileName)
         if images == None:
-            print("Images failed to load. Skipping...\n")
+            print("Images failed to load. Skipping...")
             continue
-
         imgL, imgR = images
 
-        print("Images loaded successfully.\n")
-        originalInput = np.vstack((imgL, imgR))
-        cv2.imshow("Input Images", originalInput)
+        # Display input images
+        print("Images loaded successfully.")
+        inputImages = np.vstack((imgL, imgR))
+        cv2.imshow("Input images", inputImages)
 
+        # Object detection
         objects = detectObjects(imgL)
-        disparityMap = calculateDisparity(imgL, imgR)
 
+        # Disparity calculation
+        disparityMap = calculateDisparity(imgL, imgR)
         cv2.imshow("Disparity Map", (disparityMap *
                                      (256. / 128)).astype(np.uint8)[:, 135:])
 
+        # Distance calculation
+        minDist = float("+inf")
         for i in range(len(objects)):
             distance = getDistanceToBox(disparityMap, objects[i]["box"])
+            if distance < minDist:
+                minDist = distance
             objects[i]["distance"] = distance
-        displayObjects(imgL, objects)
-        timeTaken = ((cv2.getTickCount() - timeStart) /
-                     cv2.getTickFrequency()) * 1000
 
+        printMinDist(leftFileName, minDist)
+
+        # Draw boxes on objects
+        displayObjects(imgL, objects)
+
+        # Crop to remove area which cannot be ranged
+        # i.e. not seen by the right camera
         imgL = imgL[:, 135:]
 
+        # Add label displaying processing time and show image
+        timeTaken = ((cv2.getTickCount() - timeStart) /
+                     cv2.getTickFrequency()) * 1000
         label = f"Processing time: {timeTaken:.0f}ms"
         cv2.putText(imgL, label, (0, 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
         cv2.imshow("Detected objects", imgL)
 
+        # Options to exit, save or pause
         key = cv2.waitKey(
             max(2, (1 - int(math.ceil(timeTaken))) * (not pausePlayback))) & 0xFF
         if (key == ord('x')):       # exit
@@ -81,14 +100,12 @@ def denseStereoRanging(skipForward=""):
 
 
 def readImages(leftFilename):
+    ''' Reads image pairs matching the left filename '''
     rightFilename = leftFilename.replace("_L", "_R")
     fullPathLeft = path.join(
         pathToLeftImages, leftFilename)
     fullPathRight = path.join(
         pathToRightImages, rightFilename)
-
-    print(fullPathLeft)
-    print(fullPathRight)
 
     if (".png" in leftFilename) and (path.isfile(fullPathRight)):
         imgL = cv2.imread(fullPathLeft, cv2.IMREAD_COLOR)
@@ -100,26 +117,33 @@ def readImages(leftFilename):
         return imgL, imgR
 
 
+def printMinDist(fileL, dist):
+    nearestObjString = "no object in scene" if math.isinf(
+        dist) else f"nearest detected scene object ({dist:.2f}m)"
+    print(fileL)
+    print(f"{fileL.replace('_L', '_R')} : {nearestObjString}\n")
+
+
 def displayObjects(image, objects, colour=(255, 178, 50)):
+    ''' Draws boxes with labelled distance on provided image. '''
     for obj in objects:
-
         distance = obj["distance"]
-
-        # Check distance is reasonable
-        if math.isinf(distance) or math.isnan(distance):
+        name = obj["class"]
+        if name == "train":
             return
-
         left = obj["box"][0]
         right = left + obj["box"][2]
         top = obj["box"][1]
         bottom = top + obj["box"][3]
-        name = obj["class"]
 
         # Draw a bounding box.
         cv2.rectangle(image, (left, top), (right, bottom), colour, 3)
 
-        # construct label
-        label = f"{name}: {distance:.2f}m"
+        # Check distance is reasonable
+        if math.isinf(distance) or math.isnan(distance):
+            label = f"{name}"
+        else:
+            label = f"{name}: {distance:.2f}m"
 
         # Display the label at the top of the bounding box
         labelSize, baseLine = cv2.getTextSize(
@@ -132,6 +156,6 @@ def displayObjects(image, objects, colour=(255, 178, 50)):
 
 
 if __name__ == "__main__":
-    denseStereoRanging(skipForward="")
-    # set this to a file timestamp to start from (empty is first example - outside lab)
+    denseRanging(skipForwardTo="1506943191.487683")
+    # set skipForwardTo parameter to a file timestamp to start from (empty is go from the start)
     # e.g. set to 1506943191.487683 for the end of the Bailey, just as the vehicle turns

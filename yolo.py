@@ -99,7 +99,7 @@ net.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
 # change to cv2.dnn.DNN_TARGET_CPU (slower) if this causes issues (should fail gracefully if OpenCL not available)
 net.setPreferableTarget(cv2.dnn.DNN_TARGET_OPENCL)
 
-CLAHE = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+CLAHE = cv2.createCLAHE(clipLimit=0.25, tileGridSize=(32, 32))
 
 
 def detectObjects(frame):
@@ -110,11 +110,11 @@ def detectObjects(frame):
      class -- the classifier of the detected object.
     '''
 
-    frame = contrastEqualisation(frame)
+    frameEQ = contrastEqualisation(frame)
 
     # create a 4D tensor (OpenCV 'blob') from image frame (pixels scaled 0->1, image resized)
     tensor = cv2.dnn.blobFromImage(
-        frame, 1/255, (inpWidth, inpHeight), [0, 0, 0], 1, crop=False)
+        frameEQ, 1/255, (inpWidth, inpHeight), [0, 0, 0], 1, crop=False)
 
     # set the input to the CNN network
     net.setInput(tensor)
@@ -124,7 +124,7 @@ def detectObjects(frame):
 
     # remove the bounding boxes with low confidence
     classIDs, confidences, boxes = postprocess(
-        frame, results, confThreshold, nmsThreshold)
+        frameEQ, results, confThreshold, nmsThreshold)
 
     # create list of dicts of boxes and object names
     boxClassPairs = []
